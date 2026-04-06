@@ -9,7 +9,7 @@
 **Author:** William Brian Williams / Applicert  
 **License:** Apache 2.0 (code) | CC0 (specification)  
 **Status:** v0.1 — Reference Implementation (stub proof generator)  
-**Spec:** [/spec/CBDO-Core-Engine-Spec-v0.1.md](./spec/CBDO-Core-Engine-Spec-v0.1.md)
+**Spec:** [/spec/CBDO-Core-Engine-Spec-v0.1.md](./spec/CBDO-Core-Engine-Spec-v0.1.md)  
 **Whitepaper:** [/docs/CBDO-Whitepaper-v4.1.pdf](./docs/CBDO-Whitepaper-v4.1.pdf)
 
 ---
