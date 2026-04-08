@@ -584,7 +584,7 @@ The following items are explicitly flagged for community input:
 
 ## Appendix A: Relationship to W3C Verifiable Credentials
 
-VMDs are built on and fully compatible with the W3C Verifiable Credentials Data Model v2.0 (May 2025 Recommendation). A VMD credential is a valid W3C VC. The Core Engine adds an active execution layer on top of the VC model — it does not replace or modify the underlying credential format.
+VMD is built on and fully compatible with the W3C Verifiable Credentials Data Model v2.0 (May 2025 Recommendation). A VMD credential is a valid W3C VC. The Core Engine adds an active execution layer on top of the VC model — it does not replace or modify the underlying credential format.
 
 ## Appendix B: Relationship to Solid/Inrupt
 

@@ -1,35 +1,37 @@
 /**
  * AuditLogger
  *
- * Append-only, cryptographically chained log of all Core Engine events.
+ * Append-only, cryptographically chained log of all VMD Core Engine events.
  *
- * Every entry hashes the previous entry, forming a chain where any
+ * Audit integrity is a core principle of the VMD model: all activity is
+ * auditable, and each interaction produces a verifiable record. This module
+ * enforces that guarantee structurally — the log is chained so that any
  * modification to any historical entry invalidates all subsequent entries.
  * This is the same structure used in certificate transparency logs.
  *
  * Log entries are written for:
- * - QUERY_RECEIVED
- * - QUERY_REJECTED
- * - QUERY_PROCESSED
- * - CONSENT_CHANGED
- * - OVERRIDE_INITIATED
- * - OVERRIDE_COMPLETED
- * - OVERRIDE_REJECTED
+ *   QUERY_RECEIVED      — every incoming query
+ *   QUERY_REJECTED      — any query that fails validation or consent
+ *   QUERY_PROCESSED     — any query that completes successfully
+ *   CONSENT_CHANGED     — any consent state transition initiated by a user
+ *   OVERRIDE_INITIATED  — start of a lawful access override request
+ *   OVERRIDE_COMPLETED  — override completed with multi-party cooperation
+ *   OVERRIDE_REJECTED   — override request that did not meet threshold
  *
- * Verifiers receive only an auditRef token — never the entry contents.
+ * Verifiers receive only an opaque auditRef token — never log entry contents.
+ * Users can request their own credential's history via getCbdoHistory().
  */
 
-import { createHash } from 'crypto';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 export const EventType = Object.freeze({
-  QUERY_RECEIVED: 'QUERY_RECEIVED',
-  QUERY_REJECTED: 'QUERY_REJECTED',
-  QUERY_PROCESSED: 'QUERY_PROCESSED',
-  CONSENT_CHANGED: 'CONSENT_CHANGED',
+  QUERY_RECEIVED:     'QUERY_RECEIVED',
+  QUERY_REJECTED:     'QUERY_REJECTED',
+  QUERY_PROCESSED:    'QUERY_PROCESSED',
+  CONSENT_CHANGED:    'CONSENT_CHANGED',
   OVERRIDE_INITIATED: 'OVERRIDE_INITIATED',
   OVERRIDE_COMPLETED: 'OVERRIDE_COMPLETED',
-  OVERRIDE_REJECTED: 'OVERRIDE_REJECTED',
+  OVERRIDE_REJECTED:  'OVERRIDE_REJECTED',
 });
 
 export class AuditLogger {
@@ -40,9 +42,9 @@ export class AuditLogger {
   /**
    * Append a new entry to the audit log.
    *
-   * @param {string} eventType - One of EventType
-   * @param {Object} fields - Event-specific fields
-   * @returns {string} auditRef — opaque token returned to callers
+   * @param {string} eventType  - One of EventType
+   * @param {Object} fields     - Event-specific fields
+   * @returns {string}          - Opaque auditRef token returned to callers
    */
   log(eventType, fields) {
     const entryId = randomUUID();
@@ -57,33 +59,29 @@ export class AuditLogger {
       previousHash,
       timestamp,
       eventType,
-      cbdoId: fields.cbdoId ?? null,
-      verifierId: fields.verifierId ?? null,
-      queryId: fields.queryId ?? null,
-      outcome: fields.outcome ?? null,
-      reason: fields.reason ?? null,
-      // Additional event-specific metadata
-      meta: fields.meta ?? null,
+      credentialId: fields.credentialId ?? null,
+      verifierId:   fields.verifierId   ?? null,
+      queryId:      fields.queryId      ?? null,
+      outcome:      fields.outcome      ?? null,
+      reason:       fields.reason       ?? null,
+      meta:         fields.meta         ?? null,
     };
 
-    // Compute this entry's hash over its contents
     entry.entryHash = this._hash(entry);
-
     this._entries.push(Object.freeze(entry));
 
-    // Return an opaque audit reference (first 16 chars of entryId)
+    // Return an opaque reference (first 16 chars of entryId, dashes stripped)
     return entryId.replace(/-/g, '').substring(0, 16);
   }
 
   /**
    * Verify the integrity of the entire audit chain.
-   * Returns true if the chain is valid, false if any entry has been tampered with.
+   * Returns { valid: true, entries: N } or { valid: false, reason, corruptedIndex }.
    */
   verifyChain() {
     for (let i = 0; i < this._entries.length; i++) {
       const entry = this._entries[i];
 
-      // Verify this entry's hash
       const expectedHash = this._hash({ ...entry, entryHash: undefined });
       if (entry.entryHash !== expectedHash) {
         return {
@@ -93,7 +91,6 @@ export class AuditLogger {
         };
       }
 
-      // Verify chain linkage
       if (i > 0) {
         const prevHash = this._entries[i - 1].entryHash;
         if (entry.previousHash !== prevHash) {
@@ -107,7 +104,7 @@ export class AuditLogger {
         if (entry.previousHash !== null) {
           return {
             valid: false,
-            reason: `Genesis entry should have null previousHash`,
+            reason: 'Genesis entry should have null previousHash',
             corruptedIndex: 0,
           };
         }
@@ -118,16 +115,14 @@ export class AuditLogger {
   }
 
   /**
-   * Get all entries (for audit export).
-   * In production, this should be access-controlled.
+   * Get all entries. Access should be restricted in production.
    */
   getEntries() {
     return [...this._entries];
   }
 
   /**
-   * Get a specific entry by auditRef token.
-   * Returns null if not found.
+   * Look up a specific entry by auditRef token.
    */
   getByRef(auditRef) {
     return (
@@ -138,34 +133,35 @@ export class AuditLogger {
   }
 
   /**
-   * Get a summary of events for a specific CBDO (for user transparency).
-   * Returns only high-level event metadata — not internal details.
+   * Get a user-facing summary of events for a specific credential.
+   * Returns only high-level metadata — not internal processing details.
+   * This supports the VMD principle of user transparency without
+   * exposing audit internals to verifiers.
    */
-  getCbdoHistory(cbdoId) {
+  getCredentialHistory(credentialId) {
     return this._entries
-      .filter((e) => e.cbdoId === cbdoId)
+      .filter((e) => e.credentialId === credentialId)
       .map((e) => ({
-        timestamp: e.timestamp,
-        eventType: e.eventType,
-        outcome: e.outcome,
+        timestamp:  e.timestamp,
+        eventType:  e.eventType,
+        outcome:    e.outcome,
         verifierId: e.verifierId,
-        auditRef: e.entryId.replace(/-/g, '').substring(0, 16),
+        auditRef:   e.entryId.replace(/-/g, '').substring(0, 16),
       }));
   }
 
   // ─── Private Helpers ─────────────────────────────────────────────────────
 
   _hash(entry) {
-    // Hash over the stable fields, excluding entryHash itself
     const hashable = [
       entry.entryId,
       entry.previousHash ?? '',
       String(entry.timestamp),
       entry.eventType,
-      entry.cbdoId ?? '',
-      entry.verifierId ?? '',
-      entry.queryId ?? '',
-      entry.outcome ?? '',
+      entry.credentialId ?? '',
+      entry.verifierId   ?? '',
+      entry.queryId      ?? '',
+      entry.outcome      ?? '',
     ].join('|');
 
     return createHash('sha256').update(hashable).digest('hex');

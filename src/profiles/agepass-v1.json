@@ -2,11 +2,11 @@
   "id": "agepass-v1",
   "version": "1.0.0",
   "name": "AgePass",
-  "description": "Privacy-preserving age verification. Returns a boolean answer to age threshold queries without disclosing date of birth or any other personal data.",
+  "description": "Privacy-preserving age verification under the VMD model. Returns a boolean answer to age threshold queries without disclosing date of birth or any other personal data. Directly addresses 2026 mandates in Australia, the UK Online Safety Act, EU DSA guidelines, and multiple US state laws.",
   "allowedQueries": [
     {
       "type": "AGE_THRESHOLD",
-      "description": "Is the credential holder above a specified age threshold?",
+      "description": "Is the credential holder at or above the specified age threshold?",
       "parameters": [
         {
           "name": "threshold",
@@ -54,18 +54,9 @@
     "threshold": 2,
     "totalParties": 3,
     "authorizedParties": [
-      {
-        "role": "KEY_CUSTODIAN",
-        "did": "did:example:key-custodian"
-      },
-      {
-        "role": "ISSUING_TA",
-        "did": "did:example:issuing-ta"
-      },
-      {
-        "role": "LEGAL_COMPLIANCE",
-        "did": "did:example:legal-compliance"
-      }
+      { "role": "KEY_CUSTODIAN",      "did": "did:example:key-custodian" },
+      { "role": "ISSUING_TA",         "did": "did:example:issuing-ta" },
+      { "role": "LEGAL_COMPLIANCE",   "did": "did:example:legal-compliance" }
     ]
   }
 }

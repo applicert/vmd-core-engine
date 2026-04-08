@@ -1,9 +1,19 @@
 /**
  * ProfileLoader
  *
- * Loads, validates, and caches CBDO profile definitions.
- * A profile defines the permitted queries, consent rules, response
- * constraints, and override policy for a specific CBDO type.
+ * Loads, validates, and caches VMD profile definitions.
+ *
+ * A profile is the policy contract that governs a VMD interaction. It defines:
+ *   - Which query types are permitted
+ *   - What parameters those queries may carry
+ *   - What fields may appear in responses (and what is prohibited)
+ *   - Consent rules governing access
+ *   - Data minimization constraints
+ *   - Override policy for lawful access
+ *
+ * Profiles are the mechanism by which the VMD model enforces
+ * "query-based, not access-based" interaction — no query proceeds
+ * that isn't explicitly permitted by the loaded profile.
  */
 
 export class ProfileLoader {
@@ -15,7 +25,7 @@ export class ProfileLoader {
    * Load a profile from a plain object (parsed JSON).
    * Validates structure before accepting.
    * @param {Object} profileData
-   * @returns {Object} the validated profile
+   * @returns {Object} the validated, frozen profile
    * @throws {ProfileValidationError}
    */
   load(profileData) {
@@ -80,10 +90,10 @@ export class ProfileLoader {
       errors.push('Profile must have a version string');
     }
     if (!Array.isArray(profile.allowedQueries) || profile.allowedQueries.length === 0) {
-      errors.push('Profile must have at least one allowedQuery');
+      errors.push('Profile must define at least one allowedQuery');
     } else {
       for (const q of profile.allowedQueries) {
-        if (!q.type) errors.push(`Query missing type`);
+        if (!q.type) errors.push('Query missing type');
         if (!Array.isArray(q.allowedResponseFields)) {
           errors.push(`Query '${q.type}' missing allowedResponseFields`);
         }
@@ -91,7 +101,8 @@ export class ProfileLoader {
           errors.push(`Query '${q.type}' missing credentialFields`);
         }
 
-        // Prohibited fields must not overlap with allowed response fields
+        // Prohibited fields must not overlap with allowed response fields —
+        // this is a core data minimization invariant of the VMD model
         const prohibited = profile.dataMinimization?.prohibitedFields ?? [];
         const allowed = q.allowedResponseFields ?? [];
         const overlap = prohibited.filter((f) => allowed.includes(f));
@@ -104,11 +115,11 @@ export class ProfileLoader {
     }
 
     if (!profile.consentRules) {
-      errors.push('Profile must have consentRules');
+      errors.push('Profile must define consentRules');
     }
 
     if (!profile.dataMinimization) {
-      errors.push('Profile must have dataMinimization rules');
+      errors.push('Profile must define dataMinimization rules');
     }
 
     if (profile.overridePolicy?.overridePermitted) {

@@ -1,18 +1,21 @@
 /**
  * QueryValidator
  *
- * Validates incoming queries against the loaded profile schema.
- * Performs all structural and policy checks before any credential
- * data is accessed. No credential data is read in this module.
+ * Validates incoming queries against the loaded VMD profile.
  *
- * Validation steps (per spec section 5.2):
+ * In the VMD interaction model, the profile is a binding contract — not a
+ * suggestion. The QueryValidator enforces that contract before any credential
+ * data is accessed. If a query doesn't pass all validation steps, it is
+ * rejected with a logged reason. No credential data is ever read in this module.
+ *
+ * Validation steps (per VMD spec section 5.2):
  * 1. Schema validation
  * 2. Profile existence
- * 3. Query type permitted
- * 4. Parameter validation
- * 5. Timestamp freshness
- * 6. Nonce uniqueness
- * 7. Verifier signature (stubbed — requires DID resolution)
+ * 3. Query type permitted by profile
+ * 4. Parameter validation against query definition
+ * 5. Timestamp freshness (replay window)
+ * 6. Nonce uniqueness (replay prevention)
+ * 7. Verifier signature (stubbed — requires DID resolution in production)
  * 8. Verifier authorization
  */
 
@@ -26,14 +29,15 @@ export class QueryValidator {
   constructor(profileLoader) {
     this._profileLoader = profileLoader;
     // Nonce store: Map<nonce, expiresAt>
+    // Production: replace with persistent store (Redis recommended)
     this._seenNonces = new Map();
   }
 
   /**
-   * Validate a query object.
-   * @param {Object} query - The incoming query
-   * @param {string} profileId - The profile to validate against
-   * @returns {{ valid: true, queryDef: Object } | { valid: false, reason: string }}
+   * Validate a query against the specified profile.
+   * @param {Object} query
+   * @param {string} profileId
+   * @returns {{ valid: true, queryDef: Object } | { valid: false, reason: string, detail: string }}
    */
   validate(query, profileId) {
     this._purgeExpiredNonces();
@@ -48,7 +52,10 @@ export class QueryValidator {
       return this._reject('PROFILE_NOT_FOUND', `No profile loaded for '${profileId}'`);
     }
 
-    // Step 3: Query type permitted
+    // Step 3: Query type permitted by profile
+    // The profile is the binding policy contract — any query type not listed
+    // is unconditionally rejected. This prevents scope creep and arbitrary
+    // data requests, per the VMD data minimization principle.
     if (!this._profileLoader.queryTypePermitted(profileId, query.queryType)) {
       return this._reject(
         'TYPE_NOT_PERMITTED',
@@ -78,19 +85,18 @@ export class QueryValidator {
     }
 
     // Step 7: Verifier signature
-    // NOTE: Full DID resolution and signature verification requires
-    // integration with a DID resolver. This is stubbed in v0.1.
-    // In production, this MUST verify query.verifierSignature against
-    // the verifier's DID document public key.
+    // PRODUCTION REQUIREMENT: resolve query.verifierId as a DID, fetch the
+    // verification method from the DID document, and verify
+    // query.verifierSignature over the canonical query body:
+    //   (queryId + cbdoId + verifierId + queryType + parameters + timestamp + nonce)
     const sigResult = this._verifySignatureStub(query);
     if (!sigResult.valid) return sigResult;
 
     // Step 8: Verifier authorization
-    // In production, verifier authorization may be checked against
-    // an allowlist in the profile or a registry of approved verifiers.
-    // Stub: all verifiers with valid DIDs are permitted.
+    // PRODUCTION REQUIREMENT: check verifier against an allowlist or
+    // accredited verifier registry. Stub: any verifier with a valid DID is permitted.
 
-    // All checks passed — record nonce and return success
+    // All checks passed — record nonce
     this._seenNonces.set(query.nonce, Date.now() + NONCE_WINDOW_MS);
 
     return { valid: true, queryDef };
@@ -99,7 +105,7 @@ export class QueryValidator {
   // ─── Private Helpers ─────────────────────────────────────────────────────
 
   _validateSchema(query) {
-    const required = ['queryId', 'cbdoId', 'verifierId', 'queryType', 'timestamp', 'nonce'];
+    const required = ['queryId', 'credentialId', 'verifierId', 'queryType', 'timestamp', 'nonce'];
     for (const field of required) {
       if (query[field] === undefined || query[field] === null) {
         return this._reject('SCHEMA_INVALID', `Missing required field: '${field}'`);
@@ -131,23 +137,14 @@ export class QueryValidator {
 
       if (value !== undefined && paramDef.type === 'integer') {
         if (!Number.isInteger(value)) {
-          return this._reject(
-            'PARAM_INVALID',
-            `Parameter '${paramDef.name}' must be an integer`
-          );
+          return this._reject('PARAM_INVALID', `Parameter '${paramDef.name}' must be an integer`);
         }
         const { minimum, maximum } = paramDef.constraints ?? {};
         if (minimum !== undefined && value < minimum) {
-          return this._reject(
-            'PARAM_INVALID',
-            `Parameter '${paramDef.name}' must be >= ${minimum}`
-          );
+          return this._reject('PARAM_INVALID', `Parameter '${paramDef.name}' must be >= ${minimum}`);
         }
         if (maximum !== undefined && value > maximum) {
-          return this._reject(
-            'PARAM_INVALID',
-            `Parameter '${paramDef.name}' must be <= ${maximum}`
-          );
+          return this._reject('PARAM_INVALID', `Parameter '${paramDef.name}' must be <= ${maximum}`);
         }
       }
     }
@@ -156,13 +153,6 @@ export class QueryValidator {
   }
 
   _verifySignatureStub(query) {
-    // STUB: In production, resolve query.verifierId as a DID,
-    // fetch the verification method from the DID document,
-    // and verify query.verifierSignature over the canonical
-    // query body (queryId + cbdoId + verifierId + queryType +
-    // parameters + timestamp + nonce).
-    //
-    // For v0.1 demo purposes, accept any query with a non-empty verifierId.
     if (!query.verifierId || typeof query.verifierId !== 'string') {
       return this._reject('SIGNATURE_INVALID', 'verifierId is required');
     }

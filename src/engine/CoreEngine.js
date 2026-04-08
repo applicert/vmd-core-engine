@@ -1,22 +1,31 @@
 /**
  * CoreEngine
  *
- * The orchestrator. Coordinates all modules according to the
- * processing pipeline defined in the spec (section 3.2).
+ * The orchestrator of the VMD interaction pipeline.
+ *
+ * Verifiable Minimal Disclosure (VMD) defines an interaction pattern:
+ *
+ *   Query → Policy → Consent → Response
+ *
+ * External systems do not retrieve credential data. They submit constrained
+ * queries. The Core Engine evaluates those queries against defined profile
+ * rules, enforces user consent, processes the underlying data internally,
+ * and returns only the minimal, verifiable result required.
  *
  * Pipeline (never skip or reorder steps):
- * 1. RECEIVE query
- * 2. LOAD profile
- * 3. VALIDATE query against profile
- * 4. EVALUATE consent
- * 5. PROCESS query against credential data internally
- * 6. MINIMIZE response
- * 7. GENERATE proof
- * 8. LOG interaction
- * 9. RETURN minimized response + proof
  *
- * Raw credential data is only accessed in step 5, internally.
- * It NEVER appears in any output.
+ *   1. RECEIVE  — log query receipt
+ *   2. PROFILE  — load and verify the profile exists
+ *   3. VALIDATE — check query against profile schema and rules
+ *   4. CONSENT  — evaluate consent state for this (credential, verifier, queryType) triple
+ *   5. EXECUTE  — process query against credential data INTERNALLY
+ *   6. MINIMIZE — strip result to permitted fields only
+ *   7. PROVE    — generate cryptographic proof for the minimized result
+ *   8. LOG      — record the interaction in the audit trail
+ *   9. RETURN   — send minimized result + proof to verifier
+ *
+ * Credential data is accessed ONLY in step 5, in memory, and never
+ * appears in the output of any subsequent step.
  */
 
 import { ProfileLoader } from './ProfileLoader.js';
@@ -32,16 +41,16 @@ export class CoreEngine {
    * @param {import('./ProofGenerator.js').ProofGenerator} [options.proofGenerator]
    */
   constructor(options = {}) {
-    this.profileLoader = new ProfileLoader();
-    this.queryValidator = new QueryValidator(this.profileLoader);
-    this.consentEngine = new ConsentEngine();
+    this.profileLoader    = new ProfileLoader();
+    this.queryValidator   = new QueryValidator(this.profileLoader);
+    this.consentEngine    = new ConsentEngine();
     this.responseMinimizer = new ResponseMinimizer();
-    this.proofGenerator = options.proofGenerator ?? new ProofGenerator();
-    this.auditLogger = new AuditLogger();
+    this.proofGenerator   = options.proofGenerator ?? new ProofGenerator();
+    this.auditLogger      = new AuditLogger();
   }
 
   /**
-   * Load a profile into the engine.
+   * Load a VMD profile into the engine.
    * @param {Object} profileData
    */
   loadProfile(profileData) {
@@ -49,60 +58,63 @@ export class CoreEngine {
   }
 
   /**
-   * Process an incoming query through the full pipeline.
+   * Process an incoming query through the full VMD pipeline.
    *
-   * @param {Object} query - The incoming query object
-   * @param {string} profileId - The CBDO profile to apply
-   * @param {Object} credential - The W3C Verifiable Credential (private)
-   * @param {string} holderDID - The DID of the credential holder
-   * @returns {Promise<Object>} Response object (minimized) or rejection
+   * @param {Object} query          - Incoming query object
+   * @param {string} profileId      - VMD profile to apply
+   * @param {Object} credential     - W3C Verifiable Credential (never leaves engine)
+   * @param {string} holderDID      - DID of the credential holder
+   * @returns {Promise<Object>}     - Minimized response or rejection
    */
   async processQuery(query, profileId, credential, holderDID) {
-    // Step 1: Log receipt
+
+    // ── Step 1: Log receipt ───────────────────────────────────────────────
     this.auditLogger.log(EventType.QUERY_RECEIVED, {
-      cbdoId: query.cbdoId,
-      verifierId: query.verifierId,
-      queryId: query.queryId,
-      outcome: 'RECEIVED',
+      credentialId: query.credentialId,
+      verifierId:   query.verifierId,
+      queryId:      query.queryId,
+      outcome:      'RECEIVED',
     });
 
-    // Step 2: Load profile
+    // ── Step 2: Load profile ──────────────────────────────────────────────
     const profile = this.profileLoader.get(profileId);
     if (!profile) {
       const auditRef = this.auditLogger.log(EventType.QUERY_REJECTED, {
-        cbdoId: query.cbdoId,
-        verifierId: query.verifierId,
-        queryId: query.queryId,
-        outcome: 'REJECTED',
-        reason: 'PROFILE_NOT_FOUND',
+        credentialId: query.credentialId,
+        verifierId:   query.verifierId,
+        queryId:      query.queryId,
+        outcome:      'REJECTED',
+        reason:       'PROFILE_NOT_FOUND',
       });
       return this._rejection(query, 'PROFILE_NOT_FOUND', `No profile loaded: '${profileId}'`, auditRef);
     }
 
-    // Step 3: Validate query against profile
+    // ── Step 3: Validate query against profile ────────────────────────────
     const validation = this.queryValidator.validate(query, profileId);
     if (!validation.valid) {
       const auditRef = this.auditLogger.log(EventType.QUERY_REJECTED, {
-        cbdoId: query.cbdoId,
-        verifierId: query.verifierId,
-        queryId: query.queryId,
-        outcome: 'REJECTED',
-        reason: validation.reason,
+        credentialId: query.credentialId,
+        verifierId:   query.verifierId,
+        queryId:      query.queryId,
+        outcome:      'REJECTED',
+        reason:       validation.reason,
       });
       return this._rejection(query, validation.reason, validation.detail, auditRef);
     }
 
     const { queryDef } = validation;
 
-    // Step 4: Evaluate consent
+    // ── Step 4: Evaluate consent ──────────────────────────────────────────
+    // This is a structural gate. No credential data is accessed until
+    // consent is confirmed GRANTED.
     const consentResult = this.consentEngine.evaluate(query, profile);
     if (!consentResult.consented) {
       const auditRef = this.auditLogger.log(EventType.QUERY_REJECTED, {
-        cbdoId: query.cbdoId,
-        verifierId: query.verifierId,
-        queryId: query.queryId,
-        outcome: 'REJECTED',
-        reason: `CONSENT_${consentResult.state}`,
+        credentialId: query.credentialId,
+        verifierId:   query.verifierId,
+        queryId:      query.queryId,
+        outcome:      'REJECTED',
+        reason:       `CONSENT_${consentResult.state}`,
       });
       return this._rejection(
         query,
@@ -112,28 +124,29 @@ export class CoreEngine {
       );
     }
 
-    // Step 5: Process query against credential data (internal only)
-    // This is the ONLY step where credential data is accessed.
-    // The result is a raw boolean — the field value never leaves this scope.
+    // ── Step 5: Execute query internally ─────────────────────────────────
+    // This is the ONLY place credential field values are read.
+    // The raw field value is used only to compute the boolean result —
+    // it is never stored, logged, or returned.
     let rawResult;
     try {
       rawResult = this._executeQuery(query, queryDef, credential);
     } catch (err) {
       const auditRef = this.auditLogger.log(EventType.QUERY_REJECTED, {
-        cbdoId: query.cbdoId,
-        verifierId: query.verifierId,
-        queryId: query.queryId,
-        outcome: 'ERROR',
-        reason: 'EXECUTION_ERROR',
+        credentialId: query.credentialId,
+        verifierId:   query.verifierId,
+        queryId:      query.queryId,
+        outcome:      'ERROR',
+        reason:       'EXECUTION_ERROR',
       });
       return this._rejection(query, 'EXECUTION_ERROR', 'Query execution failed', auditRef);
     }
 
-    // Step 6: Minimize the response
+    // ── Step 6: Minimize response ─────────────────────────────────────────
     const minimized = this.responseMinimizer.minimize(
       {
-        result: rawResult.result,
-        issuerId: credential.issuer ?? credential.id,
+        result:    rawResult.result,
+        issuerId:  credential.issuer ?? credential.id,
         profileId,
         timestamp: Math.floor(Date.now() / 1000),
       },
@@ -141,7 +154,7 @@ export class CoreEngine {
       profile
     );
 
-    // Step 7: Generate cryptographic proof
+    // ── Step 7: Generate proof ────────────────────────────────────────────
     const proof = await this.proofGenerator.generateProof(
       credential,
       query.queryType,
@@ -150,19 +163,19 @@ export class CoreEngine {
       holderDID
     );
 
-    // Step 8: Log success
+    // ── Step 8: Log success ───────────────────────────────────────────────
     const auditRef = this.auditLogger.log(EventType.QUERY_PROCESSED, {
-      cbdoId: query.cbdoId,
-      verifierId: query.verifierId,
-      queryId: query.queryId,
-      outcome: 'SUCCESS',
+      credentialId: query.credentialId,
+      verifierId:   query.verifierId,
+      queryId:      query.queryId,
+      outcome:      'SUCCESS',
     });
 
-    // Step 9: Return minimized response + proof
+    // ── Step 9: Return minimized result + proof ───────────────────────────
     return {
-      status: 'OK',
-      queryId: query.queryId,
-      cbdoId: query.cbdoId,
+      status:    'OK',
+      queryId:   query.queryId,
+      credentialId: query.credentialId,
       ...minimized,
       proof,
       auditRef,
@@ -170,18 +183,18 @@ export class CoreEngine {
   }
 
   /**
-   * Grant consent for a (cbdoId, verifierId, queryType) triple.
+   * Grant consent for a (credentialId, verifierId, queryType) triple.
    */
-  grantConsent(cbdoId, verifierId, queryType, userDID, profileId) {
+  grantConsent(credentialId, verifierId, queryType, userDID, profileId) {
     const profile = this.profileLoader.get(profileId);
     if (!profile) throw new Error(`Profile not found: ${profileId}`);
 
     const record = this.consentEngine.grant(
-      cbdoId, verifierId, queryType, userDID, profile.consentRules
+      credentialId, verifierId, queryType, userDID, profile.consentRules
     );
 
     this.auditLogger.log(EventType.CONSENT_CHANGED, {
-      cbdoId,
+      credentialId,
       verifierId,
       outcome: 'GRANTED',
       meta: { queryType, userDID },
@@ -191,13 +204,13 @@ export class CoreEngine {
   }
 
   /**
-   * Revoke consent.
+   * Revoke consent for a (credentialId, verifierId, queryType) triple.
    */
-  revokeConsent(cbdoId, verifierId, queryType, userDID) {
-    const record = this.consentEngine.revoke(cbdoId, verifierId, queryType, userDID);
+  revokeConsent(credentialId, verifierId, queryType, userDID) {
+    const record = this.consentEngine.revoke(credentialId, verifierId, queryType, userDID);
 
     this.auditLogger.log(EventType.CONSENT_CHANGED, {
-      cbdoId,
+      credentialId,
       verifierId,
       outcome: 'REVOKED',
       meta: { queryType, userDID },
@@ -207,10 +220,10 @@ export class CoreEngine {
   }
 
   /**
-   * Get audit history for a CBDO (for user transparency dashboard).
+   * Get the interaction history for a credential (for user transparency).
    */
-  getCbdoHistory(cbdoId) {
-    return this.auditLogger.getCbdoHistory(cbdoId);
+  getCredentialHistory(credentialId) {
+    return this.auditLogger.getCredentialHistory(credentialId);
   }
 
   /**
@@ -224,8 +237,10 @@ export class CoreEngine {
 
   /**
    * Execute a query against credential data.
-   * This is the ONLY place credential field values are accessed.
-   * The return value contains ONLY the computed result — never raw field data.
+   *
+   * IMPORTANT: This is the only method that accesses credential field values.
+   * It returns only the computed result — the raw field value goes out of
+   * scope at the end of the relevant sub-method and is never stored or returned.
    *
    * @returns {{ result: boolean }}
    */
@@ -233,7 +248,6 @@ export class CoreEngine {
     switch (query.queryType) {
       case 'AGE_THRESHOLD':
         return this._executeAgeThreshold(query.parameters, credential);
-
       default:
         throw new Error(`Unknown query type: ${query.queryType}`);
     }
@@ -244,16 +258,17 @@ export class CoreEngine {
     const subject = credential.credentialSubject;
 
     if (!subject?.dateOfBirth) {
-      throw new Error('Credential does not contain dateOfBirth field');
+      throw new Error('Credential does not contain a dateOfBirth field');
     }
 
-    // Parse the date of birth — the value is accessed here and only here
     const dob = new Date(subject.dateOfBirth);
     if (isNaN(dob.getTime())) {
       throw new Error('Invalid dateOfBirth format in credential');
     }
 
-    // Compute age without exposing the date value
+    // Compute the boolean result internally.
+    // dateOfBirth and age go out of scope here — they are never stored,
+    // logged, or returned. Only the boolean crosses this boundary.
     const today = new Date();
     let age = today.getFullYear() - dob.getFullYear();
     const monthDiff = today.getMonth() - dob.getMonth();
@@ -261,8 +276,6 @@ export class CoreEngine {
       age--;
     }
 
-    // Return ONLY the boolean result — the dob and age values
-    // go out of scope here and are never stored or returned
     return { result: age >= threshold };
   }
 
@@ -270,12 +283,12 @@ export class CoreEngine {
 
   _rejection(query, reason, detail, auditRef) {
     return {
-      status: 'REJECTED',
-      queryId: query.queryId,
-      cbdoId: query.cbdoId,
+      status:       'REJECTED',
+      queryId:      query.queryId,
+      credentialId: query.credentialId,
       reason,
       detail,
-      timestamp: Math.floor(Date.now() / 1000),
+      timestamp:    Math.floor(Date.now() / 1000),
       auditRef,
     };
   }

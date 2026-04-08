@@ -1,59 +1,78 @@
 /**
  * ConsentEngine
  *
- * State machine governing consent for (cbdoId, verifierId, queryType) triples.
+ * State machine governing consent for (credentialId, verifierId, queryType) triples.
  *
- * States: UNKNOWN → PENDING → GRANTED / DENIED
- *         GRANTED → EXPIRED / REVOKED
- *         EXPIRED → PENDING (if renewalPolicy = prompt)
- *         EXPIRED → GRANTED (if renewalPolicy = automatic)
+ * In the VMD model, no query proceeds without passing user-defined consent checks.
+ * Consent is not an afterthought — it is a structural gate in the
+ * Query → Policy → Consent → Response pipeline. This module enforces that gate.
+ *
+ * Consent states:
+ *
+ *   UNKNOWN  — No consent record exists for this triple
+ *   PENDING  — Consent has been requested; awaiting user action
+ *   GRANTED  — Consent is active and within its expiry window
+ *   DENIED   — User has explicitly denied consent
+ *   EXPIRED  — A previously granted consent has elapsed
+ *   REVOKED  — User has explicitly revoked a previously granted consent
+ *
+ * State transitions:
+ *
+ *   UNKNOWN  → PENDING   : query arrives, requireExplicitConsent = true
+ *   UNKNOWN  → GRANTED   : query arrives, defaultConsent = true
+ *   PENDING  → GRANTED   : user approves
+ *   PENDING  → DENIED    : user denies
+ *   GRANTED  → EXPIRED   : consentExpiry elapsed
+ *   GRANTED  → REVOKED   : user revokes
+ *   EXPIRED  → PENDING   : new query arrives, renewalPolicy = prompt
+ *   EXPIRED  → GRANTED   : renewalPolicy = automatic
+ *   DENIED   → PENDING   : new request after cooling-off
+ *   REVOKED  → PENDING   : new request (explicit re-consent required)
  *
  * No credential data is accessed in this module.
- * Consent evaluation MUST occur before any credential access.
  */
 
 export const ConsentState = Object.freeze({
-  UNKNOWN: 'UNKNOWN',
-  PENDING: 'PENDING',
-  GRANTED: 'GRANTED',
-  DENIED: 'DENIED',
-  EXPIRED: 'EXPIRED',
-  REVOKED: 'REVOKED',
+  UNKNOWN:  'UNKNOWN',
+  PENDING:  'PENDING',
+  GRANTED:  'GRANTED',
+  DENIED:   'DENIED',
+  EXPIRED:  'EXPIRED',
+  REVOKED:  'REVOKED',
 });
 
 export class ConsentEngine {
   constructor() {
     // Map<consentKey, ConsentRecord>
-    // consentKey = `${cbdoId}::${verifierId}::${queryType}`
+    // key = `${credentialId}::${verifierId}::${queryType}`
     this._records = new Map();
   }
 
   /**
-   * Evaluate whether a query is consented to proceed.
-   * Mutates state as needed (e.g. GRANTED→EXPIRED, UNKNOWN→PENDING).
+   * Evaluate whether a query may proceed based on consent state.
+   * Applies expiry and renewal policy, mutating state as needed.
    *
    * @param {Object} query
    * @param {Object} profile
    * @returns {{ consented: boolean, state: string, record: Object }}
    */
   evaluate(query, profile) {
-    const { cbdoId, verifierId, queryType } = query;
+    const { credentialId, verifierId, queryType } = query;
     const consentRules = profile.consentRules;
-    const key = this._key(cbdoId, verifierId, queryType);
+    const key = this._key(credentialId, verifierId, queryType);
 
     let record = this._records.get(key);
 
-    // If no record exists, initialise it
     if (!record) {
       if (consentRules.defaultConsent) {
-        record = this._createRecord(cbdoId, verifierId, queryType, ConsentState.GRANTED, consentRules);
-        this._addHistory(record, `UNKNOWN→GRANTED`, 'system', 'defaultConsent=true');
+        record = this._createRecord(credentialId, verifierId, queryType, ConsentState.GRANTED);
+        this._addHistory(record, 'UNKNOWN→GRANTED', 'system', 'defaultConsent=true');
       } else if (consentRules.requireExplicitConsent) {
-        record = this._createRecord(cbdoId, verifierId, queryType, ConsentState.PENDING, consentRules);
-        this._addHistory(record, `UNKNOWN→PENDING`, 'system', 'requireExplicitConsent=true');
+        record = this._createRecord(credentialId, verifierId, queryType, ConsentState.PENDING);
+        this._addHistory(record, 'UNKNOWN→PENDING', 'system', 'requireExplicitConsent=true');
       } else {
-        record = this._createRecord(cbdoId, verifierId, queryType, ConsentState.GRANTED, consentRules);
-        this._addHistory(record, `UNKNOWN→GRANTED`, 'system', 'implicit consent');
+        record = this._createRecord(credentialId, verifierId, queryType, ConsentState.GRANTED);
+        this._addHistory(record, 'UNKNOWN→GRANTED', 'system', 'implicit consent');
       }
       this._records.set(key, record);
     }
@@ -65,16 +84,14 @@ export class ConsentEngine {
         record.state = ConsentState.EXPIRED;
         this._addHistory(record, `${prevState}→EXPIRED`, 'system', 'consent expiry elapsed');
 
-        // Apply renewal policy
         if (consentRules.renewalPolicy === 'automatic') {
           record.state = ConsentState.GRANTED;
           record.grantedAt = Math.floor(Date.now() / 1000);
           record.expiresAt = record.grantedAt + consentRules.consentExpiry;
-          this._addHistory(record, `EXPIRED→GRANTED`, 'system', 'renewalPolicy=automatic');
+          this._addHistory(record, 'EXPIRED→GRANTED', 'system', 'renewalPolicy=automatic');
         } else {
-          // prompt or none — move to PENDING
           record.state = ConsentState.PENDING;
-          this._addHistory(record, `EXPIRED→PENDING`, 'system', `renewalPolicy=${consentRules.renewalPolicy}`);
+          this._addHistory(record, 'EXPIRED→PENDING', 'system', `renewalPolicy=${consentRules.renewalPolicy}`);
         }
       }
     }
@@ -84,17 +101,10 @@ export class ConsentEngine {
   }
 
   /**
-   * Grant consent for a (cbdoId, verifierId, queryType) triple.
-   * Called when user approves a consent request.
-   *
-   * @param {string} cbdoId
-   * @param {string} verifierId
-   * @param {string} queryType
-   * @param {string} userDID
-   * @param {Object} consentRules
+   * Grant consent. Called when the user approves a consent request.
    */
-  grant(cbdoId, verifierId, queryType, userDID, consentRules) {
-    const key = this._key(cbdoId, verifierId, queryType);
+  grant(credentialId, verifierId, queryType, userDID, consentRules) {
+    const key = this._key(credentialId, verifierId, queryType);
     let record = this._records.get(key);
 
     const now = Math.floor(Date.now() / 1000);
@@ -103,7 +113,7 @@ export class ConsentEngine {
       : null;
 
     if (!record) {
-      record = this._createRecord(cbdoId, verifierId, queryType, ConsentState.PENDING, consentRules);
+      record = this._createRecord(credentialId, verifierId, queryType, ConsentState.PENDING);
       this._records.set(key, record);
     }
 
@@ -120,12 +130,12 @@ export class ConsentEngine {
   /**
    * Deny consent.
    */
-  deny(cbdoId, verifierId, queryType, userDID) {
-    const key = this._key(cbdoId, verifierId, queryType);
+  deny(credentialId, verifierId, queryType, userDID) {
+    const key = this._key(credentialId, verifierId, queryType);
     let record = this._records.get(key);
 
     if (!record) {
-      record = this._createRecord(cbdoId, verifierId, queryType, ConsentState.PENDING, {});
+      record = this._createRecord(credentialId, verifierId, queryType, ConsentState.PENDING);
       this._records.set(key, record);
     }
 
@@ -139,12 +149,12 @@ export class ConsentEngine {
   /**
    * Revoke a previously granted consent.
    */
-  revoke(cbdoId, verifierId, queryType, userDID) {
-    const key = this._key(cbdoId, verifierId, queryType);
+  revoke(credentialId, verifierId, queryType, userDID) {
+    const key = this._key(credentialId, verifierId, queryType);
     const record = this._records.get(key);
 
     if (!record || record.state !== ConsentState.GRANTED) {
-      throw new ConsentError(`Cannot revoke consent that is not in GRANTED state`);
+      throw new ConsentError('Cannot revoke consent that is not in GRANTED state');
     }
 
     const prevState = record.state;
@@ -157,19 +167,19 @@ export class ConsentEngine {
   /**
    * Get the current consent record for a triple.
    */
-  getRecord(cbdoId, verifierId, queryType) {
-    return this._records.get(this._key(cbdoId, verifierId, queryType)) ?? null;
+  getRecord(credentialId, verifierId, queryType) {
+    return this._records.get(this._key(credentialId, verifierId, queryType)) ?? null;
   }
 
   // ─── Private Helpers ─────────────────────────────────────────────────────
 
-  _key(cbdoId, verifierId, queryType) {
-    return `${cbdoId}::${verifierId}::${queryType}`;
+  _key(credentialId, verifierId, queryType) {
+    return `${credentialId}::${verifierId}::${queryType}`;
   }
 
-  _createRecord(cbdoId, verifierId, queryType, initialState, consentRules) {
+  _createRecord(credentialId, verifierId, queryType, initialState) {
     return {
-      cbdoId,
+      credentialId,
       verifierId,
       queryType,
       state: initialState,
