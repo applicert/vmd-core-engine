@@ -1,16 +1,18 @@
-# CBDO Core Engine
+# Applicert – VMD Core Engine
 
-> 🚧 Reference implementation of the CBDO Core Engine (spec v0.1) — not production-ready
+> 🚧 Reference implementation of a Verifiable Minimal Disclosure (VMD) system (spec v0.1) – not production-ready
+>
+> This project was previously developed under the working term "CBDO" (Consent-Based Data Objects).
 
-**Consent-Based Data Object Core Engine** — the active execution layer that transforms W3C Verifiable Credentials into policy-enforced, query-responsive verification systems.
+**Consent-Based Data Object Core Engine** – the active execution layer that transforms W3C Verifiable Credentials into policy-enforced, query-responsive verification systems.
 
 > *Verifiers ask questions. The engine answers them. Credential data never leaves.*
 
 **Author:** William Brian Williams / Applicert  
 **License:** Apache 2.0 (code) | CC0 (specification)  
-**Status:** v0.1 — Reference Implementation (stub proof generator)  
-**Spec:** [/spec/CBDO-Core-Engine-Spec-v0.1.md](./spec/CBDO-Core-Engine-Spec-v0.1.md)  
-**Whitepaper:** [/docs/CBDO-Whitepaper-v4.1.pdf](./docs/CBDO-Whitepaper-v4.1.pdf)
+**Status:** v0.1 – Reference Implementation (stub proof generator)  
+**Spec:** [/spec/VMD-Core-Engine-Spec-v0.1.md](./spec/VMD-Core-Engine-Spec-v0.1.md)  
+**Whitepaper:** [/docs/VMD-Whitepaper-v4.1.pdf](./docs/VMD-Whitepaper-v4.1.pdf)
 
 ---
 
@@ -26,9 +28,9 @@ The date of birth never appears in any response. Ever.
 
 ## Why This Exists
 
-Current verification systems require exposing raw data to prove simple claims — creating unnecessary privacy risk, storage liability, and regulatory burden.
+Current verification systems require exposing raw data to prove simple claims – creating unnecessary privacy risk, storage liability, and regulatory burden.
 
-The CBDO Core Engine demonstrates an alternative model:
+The VMD Core Engine demonstrates an alternative model:
 
 - Verifiers receive only the answer they need (e.g. `true/false`)
 - Raw credential data never leaves the user's control
@@ -44,7 +46,7 @@ This repository provides a working reference implementation of that model.
 node demo/agepass-demo.js
 ```
 
-No dependencies required for the demo — the stub proof generator uses Node's built-in `crypto` module.
+No dependencies required for the demo – the stub proof generator uses Node's built-in `crypto` module.
 
 ---
 
@@ -52,12 +54,12 @@ No dependencies required for the demo — the stub proof generator uses Node's b
 
 ```
 CoreEngine (orchestrator)
-├── ProfileLoader     — loads and validates profile schemas
-├── QueryValidator    — validates queries before any data access  
-├── ConsentEngine     — state machine: UNKNOWN→PENDING→GRANTED/DENIED
-├── ResponseMinimizer — strips responses to permitted fields only
-├── ProofGenerator    — ⚠ STUB: replace with BBS+/ZKP library
-└── AuditLogger       — append-only cryptographically chained log
+├── ProfileLoader     – loads and validates profile schemas
+├── QueryValidator    – validates queries before any data access  
+├── ConsentEngine     – state machine: UNKNOWN→PENDING→GRANTED/DENIED
+├── ResponseMinimizer – strips responses to permitted fields only
+├── ProofGenerator    – ⚠ STUB: replace with BBS+/ZKP library
+└── AuditLogger       – append-only cryptographically chained log
 ```
 
 ## Processing Pipeline
@@ -80,13 +82,13 @@ Credential data is accessed **only in step 5**. It never appears in output.
 
 ## Profiles
 
-A profile defines what questions can be asked about a CBDO and how answers must be returned. Currently included:
+A profile defines what questions can be asked about a VMD and how answers must be returned. Currently included:
 
 | Profile | File | Status |
 |---------|------|--------|
 | AgePass v1 | `src/profiles/agepass-v1.json` | ✓ Complete |
-| CareerPass v1 | — | Planned |
-| MedPass v1 | — | Planned |
+| CareerPass v1 | – | Planned |
+| MedPass v1 | – | Planned |
 
 ---
 
@@ -120,7 +122,7 @@ Current nonce store is in-memory. Production requires:
 
 ## Specification
 
-The full technical specification is at `/spec/CBDO-Core-Engine-Spec-v0.1.md`.
+The full technical specification is at `/spec/VMD-Core-Engine-Spec-v0.1.md`.
 
 It covers:
 - Profile definition schema
@@ -162,3 +164,4 @@ Contributions especially welcome for:
 This project is licensed under the Apache License 2.0.
 
 *© 2026 William Brian Williams / Applicert.*
+

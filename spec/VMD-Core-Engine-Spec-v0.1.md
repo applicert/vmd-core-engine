@@ -1,4 +1,4 @@
-# CBDO Core Engine Specification
+# VMD Core Engine Specification
 ## Version 0.1 — Draft for Public Review
 
 **Author:** William Brian Williams, Applicert  
@@ -10,7 +10,7 @@
 
 ## Abstract
 
-This document specifies the execution logic of the Consent-Based Data Object (CBDO) Core Engine — the active layer that transforms static verifiable credentials into policy-enforced, query-responsive verification systems. The Core Engine sits between a user's credential store and any external verifier, ensuring that no raw data is ever disclosed during standard verification interactions.
+This document specifies the execution logic of the Verifiable Minimal Disclosure (VMD) Core Engine — the active layer that transforms static verifiable credentials into policy-enforced, query-responsive verification systems. The Core Engine sits between a user's credential store and any external verifier, ensuring that no raw data is ever disclosed during standard verification interactions.
 
 This specification is intended as a contribution toward an open Internet Standard. All concepts described herein are published as prior art under CC0. Reference implementation code is available at [repository URL].
 
@@ -41,25 +41,25 @@ This specification does not cover:
 - Specific cryptographic library implementations (see Section 8)
 - Network transport protocols
 - User interface requirements
-- Trust Authority accreditation procedures (see CBDO Governance Charter)
+- Trust Authority accreditation procedures (see VMD Governance Charter)
 
 ---
 
 ## 2. Terminology
 
-**CBDO** — Consent-Based Data Object. A user-owned, query-responsive data container built on W3C Verifiable Credentials.
+**VMD** — Verifiable Minimal Disclosure. A user-owned, query-responsive data container built on W3C Verifiable Credentials.
 
-**Profile** — A machine-readable schema defining the permitted queries, response types, consent rules, and override conditions for a specific CBDO type (e.g., AgePass, CareerPass).
+**Profile** — A machine-readable schema defining the permitted queries, response types, consent rules, and override conditions for a specific VMD type (e.g., AgePass, CareerPass).
 
-**Query** — A structured request submitted by an external verifier asking a specific question about a CBDO's contents.
+**Query** — A structured request submitted by an external verifier asking a specific question about a VMD's contents.
 
 **Response** — The minimized, cryptographically provable answer returned by the Core Engine. Never contains raw field values in standard operation.
 
-**Trust Authority (TA)** — An accredited institution authorized to issue signed CBDOs and define profile schemas.
+**Trust Authority (TA)** — An accredited institution authorized to issue signed VMDs and define profile schemas.
 
 **Verifier** — Any external system submitting queries to the Core Engine.
 
-**Consent State** — The current authorization status of a specific verifier's access to a specific CBDO, as governed by the user's consent rules.
+**Consent State** — The current authorization status of a specific verifier's access to a specific VMD, as governed by the user's consent rules.
 
 **Proof** — A cryptographic artifact demonstrating that a response was derived correctly from a signed credential, without revealing the underlying data.
 
@@ -120,7 +120,7 @@ Every query follows this exact sequence. No step may be skipped or reordered.
 
 ```
 1. RECEIVE query
-2. LOAD profile for CBDO type
+2. LOAD profile for VMD type
 3. VALIDATE query against profile schema
    → REJECT if invalid (log rejection)
 4. EVALUATE consent state for (verifier, query type)
@@ -212,7 +212,7 @@ A profile document MUST be rejected if:
 ```json
 {
   "queryId": "string — unique identifier for this query instance",
-  "cbdoId": "string — identifier of the target CBDO",
+  "VMDId": "string — identifier of the target VMD",
   "verifierId": "string — DID of the requesting verifier",
   "queryType": "string — must match an allowedQueries.type in the profile",
   "parameters": "object — query-specific parameters",
@@ -227,13 +227,13 @@ A profile document MUST be rejected if:
 The QueryValidator MUST perform all of the following checks in order, halting and returning a rejection on first failure:
 
 1. **Schema validation** — query object conforms to format above
-2. **Profile existence** — a loaded profile exists for the CBDO type
+2. **Profile existence** — a loaded profile exists for the VMD type
 3. **Query type permitted** — `queryType` exists in `profile.allowedQueries`
 4. **Parameter validation** — all `parameters` conform to the query type's parameter schema
 5. **Timestamp freshness** — `timestamp` is within ±300 seconds of current time
 6. **Nonce uniqueness** — `nonce` has not been seen before (replay prevention)
 7. **Verifier signature** — `verifierSignature` is valid for the verifier's DID
-8. **Verifier authorization** — verifier is permitted to query this CBDO type per profile rules
+8. **Verifier authorization** — verifier is permitted to query this VMD type per profile rules
 
 ### 5.3 Rejection Response Format
 
@@ -254,7 +254,7 @@ Rejection responses MUST NOT include any credential data or internal state.
 
 ### 6.1 Consent States
 
-Each (CBDO, verifier, queryType) triple exists in exactly one of the following states:
+Each (VMD, verifier, queryType) triple exists in exactly one of the following states:
 
 ```
 UNKNOWN     → No consent record exists
@@ -288,7 +288,7 @@ The ConsentEngine MUST evaluate consent before any credential data is accessed. 
 
 ```json
 {
-  "cbdoId": "string",
+  "VMDId": "string",
   "verifierId": "string",
   "queryType": "string",
   "state": "string — see 6.1",
@@ -326,7 +326,7 @@ The ResponseMinimizer MUST apply all of the following transformations to every r
 {
   "status": "OK",
   "queryId": "string",
-  "cbdoId": "string",  
+  "VMDId": "string",  
   "result": "value — type per profile (boolean for AgePass)",
   "proof": "string — cryptographic proof object (see Section 8)",
   "issuerId": "string — DID of issuing Trust Authority",
@@ -420,7 +420,7 @@ The audit log MUST be:
   "previousHash": "string — SHA-256 of previous entry, null for genesis",
   "timestamp": "integer — unix timestamp milliseconds",
   "eventType": "string — QUERY_RECEIVED | QUERY_REJECTED | QUERY_PROCESSED | CONSENT_CHANGED | OVERRIDE_INITIATED | OVERRIDE_COMPLETED | OVERRIDE_REJECTED",
-  "cbdoId": "string",
+  "VMDId": "string",
   "verifierId": "string — null for system events",
   "queryId": "string — null for non-query events",
   "outcome": "string — SUCCESS | REJECTED | ERROR",
@@ -434,7 +434,7 @@ The audit log MUST be:
 Each entry's `entryHash` is computed as:
 
 ```
-SHA-256(entryId + previousHash + timestamp + eventType + cbdoId + outcome)
+SHA-256(entryId + previousHash + timestamp + eventType + VMDId + outcome)
 ```
 
 The log is valid if and only if for every entry N, `entry[N].previousHash === entry[N-1].entryHash`.
@@ -449,14 +449,14 @@ Override events are logged with additional fields and MUST include the identity 
 
 ### 10.1 Overview
 
-Raw CBDO contents may be accessed under lawful authority through a threshold cryptography scheme. This section specifies the protocol. It does NOT specify the threshold key generation ceremony, which is a Trust Authority operational procedure.
+Raw VMD contents may be accessed under lawful authority through a threshold cryptography scheme. This section specifies the protocol. It does NOT specify the threshold key generation ceremony, which is a Trust Authority operational procedure.
 
 ### 10.2 Override Request Format
 
 ```json
 {
   "overrideId": "string — UUID",
-  "cbdoId": "string",
+  "VMDId": "string",
   "requestingAuthority": "string — DID of requesting authority (e.g. court)",
   "legalBasis": "string — jurisdiction-specific legal reference",
   "authorizedBy": "string — reference to warrant or legal order",
@@ -489,7 +489,7 @@ An override MUST be rejected if:
 
 ## 11. AgePass Profile — v1.0
 
-The AgePass profile is the reference implementation of the CBDO profile format.
+The AgePass profile is the reference implementation of the VMD profile format.
 
 ```json
 {
@@ -584,11 +584,11 @@ The following items are explicitly flagged for community input:
 
 ## Appendix A: Relationship to W3C Verifiable Credentials
 
-CBDOs are built on and fully compatible with the W3C Verifiable Credentials Data Model v2.0 (May 2025 Recommendation). A CBDO credential is a valid W3C VC. The Core Engine adds an active execution layer on top of the VC model — it does not replace or modify the underlying credential format.
+VMDs are built on and fully compatible with the W3C Verifiable Credentials Data Model v2.0 (May 2025 Recommendation). A VMD credential is a valid W3C VC. The Core Engine adds an active execution layer on top of the VC model — it does not replace or modify the underlying credential format.
 
 ## Appendix B: Relationship to Solid/Inrupt
 
-The Solid project addresses data storage sovereignty — users own their data pods. CBDOs address disclosure minimization — verifiers never receive raw data. These are complementary layers. A CBDO may be stored within a Solid pod. The Core Engine's query-response model provides capabilities that Solid's access-control model does not address.
+The Solid project addresses data storage sovereignty — users own their data pods. VMDs address disclosure minimization — verifiers never receive raw data. These are complementary layers. A VMD may be stored within a Solid pod. The Core Engine's query-response model provides capabilities that Solid's access-control model does not address.
 
 ## Appendix C: Prior Art Disclosure
 
